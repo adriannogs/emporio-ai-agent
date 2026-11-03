@@ -1,39 +1,89 @@
-# Empório da Música — AI Customer Service Agent
+# Empório AI Agent
 
-Protótipo de agente conversacional em Python para o desafio técnico de AI Engineer da Artefact. O projeto combina roteamento de intenção, ferramentas determinísticas sobre SQLite, recuperação lexical de políticas (RAG leve) e um LLM opcional para naturalizar a resposta.
+**A Python-based conversational customer service agent for music retail.**
 
-> **Importante sobre os dados:** os CSVs fornecidos são um snapshot de demonstração, com registros de pedidos entre outubro de 2025 e março de 2026. O agente não está conectado ao ERP/estoque da loja. Portanto, ele informa explicitamente que preço, quantidade, promoções e status refletem os arquivos fornecidos, e não dados em tempo real. Nunca afirma ter consultado um sistema de produção.
+The Empório AI Agent is a prototype developed for the Artefact AI Engineer technical challenge. It supports customer conversations in Brazilian Portuguese and combines explicit intent routing, deterministic data tools, lexical policy retrieval, session-level conversational state, and optional LLM-assisted response rewriting.
 
-## 1. Funcionalidades
+> **Prototype and data notice:** the supplied CSV files are demonstration data. This project does not connect to a live ERP, CRM, payment gateway, shipping provider, or inventory service. Product prices, stock quantities, promotions, and order details are only as current as the provided dataset.
 
-- Catálogo: busca por categoria/modelo, preço e disponibilidade.
-- Promoções: consulta `is_active=1`, verifica produto ativo e estoque positivo e calcula o preço promocional.
-- Pedidos: consulta status e rastreamento mediante número do pedido **e nome do titular**.
-- Políticas: recuperação de trechos do manual sobre horário, pagamentos, trocas/devoluções, frete, garantia, escopo e LGPD.
-- Escopo: redireciona pedidos de acessórios e perguntas sem relação com a loja.
-- Histórico: grava conversas em JSONL por sessão (diretório `history/`, ignorado pelo Git).
-- Modo local determinístico: funciona sem chave de API.
-- Modo LLM opcional: OpenAI é usado somente para reescrever a resposta validada; não decide preço, estoque, status ou política e não substitui as consultas estruturadas.
+## Project status
 
-## 2. Arquitetura e decisões técnicas
+| Item | Status |
+|---|---|
+| Current release | `3.2.1` |
+| Python | `3.10+` (tested in the development environment with Python 3.12) |
+| Interface | Command-line interface (CLI) |
+| Structured data | CSV imported into SQLite |
+| Policy retrieval | Lightweight lexical retrieval (RAG-style) |
+| LLM | Optional |
+| Automated tests | 41 passing in the validated V3.2 codebase |
 
-### Abordagem: híbrida (roteamento + tools + RAG)
+**V3.2.1 is a documentation and release-metadata update.** It does not change the conversational behavior validated in V3.2. The package version was updated from `3.2.0` to `3.2.1`; the existing 41-test suite was rerun against this release package.
 
-1. **Roteamento de intenção:** regras explícitas e auditáveis identificam consulta de produto, promoção, pedido, política ou assunto geral. Para o escopo pequeno do desafio, essa solução reduz dependência de classificação probabilística e facilita testes. Em evolução, pode ser substituída/complementada por classificação via LLM.
-2. **Tools determinísticas:** `tools.py` consulta SQLite com parâmetros SQL. Dados transacionais não são gerados pelo modelo. O banco é reconstruído a partir dos CSVs.
-3. **RAG lexical:** `policies.py` divide o manual em seções e recupera os trechos com maior sobreposição lexical. É intencionalmente leve, sem embeddings ou serviço vetorial externo, suficiente para o corpus curto fornecido. Em produção, eu avaliaria embeddings multilíngues, reranking e avaliação de retrieval.
-4. **LLM opcional:** quando `OPENAI_API_KEY` está configurada, o modelo recebe a mensagem, os resultados das ferramentas e uma resposta-base validada. Sua tarefa é somente melhorar a fluidez sem adicionar fatos. Se a API falhar, o agente retorna a resposta determinística.
-5. **Persistência:** SQLite simplifica o protótipo reproduzível; JSONL mantém histórico por sessão. Em produção, usaria PostgreSQL, gestão de sessão e retenção configurável.
-6. **Interface:** CLI para priorizar execução local no VS Code e reduzir componentes não solicitados pelo desafio.
+## Key capabilities
 
-### Por que não usar um agente autônomo com SQL livre?
+- **Product discovery:** search the demonstration catalog by product, brand, category, and maximum price.
+- **Availability lookup:** display the stock quantity recorded in the supplied dataset, without implying real-time inventory access.
+- **Contextual comparison:** compare products found during the previous catalog query in the same session, using fields available in the dataset.
+- **Contextual sorting:** sort the previous result set by lowest price, highest price, or highest recorded stock.
+- **Promotions:** retrieve promotions flagged as active, subject to the product status and stock data available in the snapshot.
+- **Order lookup:** require an order identifier and customer-name validation for the demonstration lookup.
+- **Policy questions:** retrieve relevant sections from the store policy manual, including payment, returns, shipping, warranty, store information, customer service, and privacy.
+- **Session context:** retain conversational state within a session and keep different session identifiers isolated.
+- **Out-of-scope handling:** explain that the store sells musical instruments, not accessories, and redirect unrelated requests.
+- **Optional LLM rewriting:** use an LLM to improve wording while keeping the deterministic response and retrieved context as the factual basis.
 
-O conjunto de operações é conhecido e sensível a precisão. Consultas parametrizadas e funções limitadas são mais previsíveis, seguras e testáveis do que permitir que o LLM gere SQL arbitrário. A seleção da ferramenta é explícita no roteador; o modelo não tem acesso direto ao banco.
+## Architecture
 
-## 3. Estrutura do projeto
+The system follows a deliberately constrained hybrid design. The LLM is not the source of truth for prices, inventory, promotions, orders, or policy rules.
+
+```mermaid
+flowchart TD
+    U[Customer message] --> O[Conversation orchestrator]
+    O --> I[Intent routing and session state]
+    I -->|Catalog / product / price / stock| T[Deterministic data tools]
+    I -->|Promotion| P[Promotion query]
+    I -->|Order| Q[Validated order lookup]
+    I -->|Policy question| R[Lexical policy retrieval]
+    T --> D[(SQLite database)]
+    P --> D
+    Q --> D
+    R --> M[(Policy manual)]
+    D --> C[Grounded response context]
+    M --> C
+    C --> G[Response generation]
+    G -->|Optional| L[LLM rewriting]
+    G --> A[Deterministic response]
+    L --> A
+    A --> U
+```
+
+### Request lifecycle
+
+1. The CLI receives a customer message and associates it with a `session_id`.
+2. The agent normalizes the message and identifies the intent using explicit routing rules.
+3. The session state is consulted when the message is a follow-up, such as a policy topic, a comparison request, or a sorting instruction.
+4. The agent invokes the relevant deterministic function or policy retriever.
+5. The response is composed from the returned data and available policy text.
+6. If LLM mode is enabled, the model may rewrite the grounded response. The deterministic mode remains available with `--no-llm`.
+
+For implementation details and module responsibilities, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Technology stack
+
+- **Python 3.10+**
+- **SQLite** for local structured-data queries
+- **Pandas** for CSV ingestion
+- **python-dotenv** for environment configuration
+- **OpenAI Python SDK** for optional LLM rewriting
+- **Pytest** for automated tests
+
+The policy retriever is lexical: it splits the manual into sections, normalizes tokens, scores overlap with the query, and returns the highest-scoring sections. It does not use embeddings, a vector database, or a reranker.
+
+## Repository structure
 
 ```text
-emporio-ai-agent/
+emporio_ai_agent/
 ├── data/
 │   ├── categories.csv
 │   ├── customers.csv
@@ -47,34 +97,39 @@ emporio-ai-agent/
 │   ├── 02_preco_produto.md
 │   ├── 03_pedido_rastreamento.md
 │   └── 04_devolucao_e_escopo.md
+├── history/                 # Local runtime history; not committed
 ├── src/emporio_agent/
-│   ├── agent.py
-│   ├── cli.py
-│   ├── config.py
-│   ├── database.py
-│   ├── policies.py
-│   └── tools.py
+│   ├── agent.py             # Routing, dialogue state, response orchestration
+│   ├── cli.py               # Command-line interface
+│   ├── config.py            # Paths and environment configuration
+│   ├── database.py          # SQLite initialization and query access
+│   ├── policies.py          # Lexical policy retrieval
+│   └── tools.py             # Deterministic business-data tools
 ├── tests/
+│   └── test_agent.py
 ├── .env.example
 ├── .gitignore
 ├── pyproject.toml
 ├── requirements.txt
+├── ARCHITECTURE.md
+├── CHANGELOG.md
 └── README.md
 ```
 
-## 4. Executar no VS Code
+## Quick start
 
-### Pré-requisitos
-- Python 3.10 ou superior (recomendado 3.11/3.12).
-- VS Code com extensão Python da Microsoft.
-- Git (para publicar o repositório).
+### Requirements
+
+- Python 3.10 or newer.
+- Git (optional, for cloning the repository).
+- VS Code or another Python-compatible editor (optional).
 
 ### Windows PowerShell
 
-Abra a pasta do projeto no VS Code (`File > Open Folder`) e, no terminal integrado, execute:
+From the project root:
 
 ```powershell
-py -3.11 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
@@ -82,19 +137,7 @@ pip install -e .
 Copy-Item .env.example .env
 ```
 
-O banco é criado automaticamente ao iniciar o CLI. Para iniciar:
-
-```powershell
-python -m emporio_agent
-```
-
-Para reconstruir o SQLite do zero a partir dos CSVs:
-
-```powershell
-python -m emporio_agent --rebuild-db
-```
-
-Se o PowerShell bloquear a ativação do ambiente, execute uma vez na sessão:
+If PowerShell blocks virtual-environment activation, allow it for the current terminal process:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -110,88 +153,163 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install -e .
 cp .env.example .env
-python -m emporio_agent
 ```
 
-### Modo LLM (opcional)
+### Run without an LLM
 
-Sem `OPENAI_API_KEY`, o projeto funciona localmente em modo determinístico. Para habilitar a reformulação via OpenAI, preencha `.env`:
-
-```env
-OPENAI_API_KEY=sua_chave
-OPENAI_MODEL=gpt-4o-mini
-```
-
-Reinicie o CLI. A chave nunca deve ser commitada. Para forçar o modo sem LLM mesmo com chave configurada:
+The deterministic mode does not require an API key:
 
 ```bash
 python -m emporio_agent --no-llm
 ```
 
-### Comandos úteis
+Rebuild the local SQLite database from the CSV files:
 
-- `python -m emporio_agent`: inicia o atendimento.
-- `python -m emporio_agent --rebuild-db`: recria o banco SQLite.
-- `python -m emporio_agent --no-llm`: modo local sem API.
-- `python -m pytest -q`: executa testes automatizados.
-- Digite `sair` para encerrar.
+```bash
+python -m emporio_agent --rebuild-db --no-llm
+```
 
-## 5. Exemplos de perguntas
+### Optional OpenAI integration
 
-- `Quais opções de violões disponíveis custando até R$ 1000?`
-- `Quanto custa o Takamine GD20?`
-- `Qual é o horário de funcionamento no sábado?`
-- `Posso devolver uma compra online?`
-- `Onde está meu pedido 8?` (o agente solicita validação do titular)
-- `Pedido 8, nome Ana Carolina Ferreira` (consulta demonstração após validação mínima)
-- `Vocês vendem cordas para violão?`
+Set the following values in `.env`:
 
-As conversas de referência estão em `examples/`.
+```dotenv
+OPENAI_API_KEY=your_api_key
+OPENAI_MODEL=gpt-4o-mini
+```
 
-## 6. Tratamento de dados e segurança
+Then run:
 
-- CSVs são carregados em SQLite por `pandas`; operações usam parâmetros SQL.
-- Consulta de pedido exige número + nome do titular; não há listagem de clientes.
-- O agente não revela dados de contato de clientes.
-- O histórico local pode conter mensagens pessoais: mantenha `history/` fora do Git, restrinja acesso e defina retenção antes de produção.
-- `.env`, banco gerado e histórico estão no `.gitignore`.
-- Não há execução de SQL arbitrário produzido pelo LLM.
-- O protótipo não realiza cancelamentos, reembolsos, alterações ou reservas; casos desse tipo devem ser encaminhados à equipe.
+```bash
+python -m emporio_agent
+```
 
-## 7. Premissas e inconsistências encontradas nas fontes
+Never commit `.env` or expose API keys. The LLM integration is optional; deterministic mode is the reproducible baseline for local evaluation.
 
-As ambiguidades foram preservadas e documentadas, sem inventar uma resposta:
+## Example conversations
 
-1. **Contato:** o manual informa `(67) 3341-4444` na seção de dados da empresa (página 2), mas `(67) 3321-4500` na seção de WhatsApp (página 6). O agente não escolhe um número como definitivo; recomenda confirmação humana.
-2. **E-mail:** o documento contém grafias com e sem acento no domínio. Não é necessário ao fluxo de demonstração; evitaria automatizar envio até confirmar o endereço oficial.
-3. **Parcelamento:** a tabela geral menciona parcela mínima de R$ 100 para crédito até 12x; as regras detalhadas estabelecem mínimos diferentes para 1–3x, 4–6x e 7–12x. O manual estruturado preserva ambas as informações e orienta confirmação para simulações específicas.
-4. **Promoções:** `promotions.csv` possui `is_active`, mas não possui data de início/fim. A aplicação usa apenas a flag e alerta que a vigência precisa ser confirmada.
-5. **Atualidade:** os pedidos do CSV vão até março de 2026; não representam necessariamente o estado atual em produção. O agente declara que trabalha com snapshot de demonstração.
-6. **Dados de clientes:** os arquivos contêm dados pessoais. Foram mantidos apenas para viabilizar a consulta demonstrativa solicitada; o projeto não os expõe em buscas gerais. Para publicação, avaliar se os CSVs originais devem permanecer públicos; em caso de dados reais, remover/anonimizar antes de qualquer push.
+The agent communicates in Brazilian Portuguese. The repository includes longer examples under [`examples/`](examples/).
 
-## 8. Limitações conhecidas e próximos passos
+A short catalog and comparison flow:
 
-- Roteador por regras: ampliar sinônimos, cobrir mais categorias e adicionar fallback de classificação semântica avaliado.
-- RAG lexical: migrar para embeddings, reranker, citações por seção e conjunto de perguntas de avaliação.
-- Dados estáticos: conectar ERP/CRM/estoque com autenticação, atualização incremental e observabilidade.
-- Identidade do cliente: autenticação real (OTP ou canal verificado) em vez de validação por nome.
-- Histórico: banco com criptografia, política de retenção, consentimento e exclusão conforme LGPD.
-- Atendimento humano: integração com CRM/help desk, fila e SLA de 24 horas úteis para reclamações.
-- Testes: adicionar avaliação offline de precisão de roteamento, groundedness, retrieval e segurança contra prompt injection.
+```text
+Você: Quero ver guitarras
+Empório da Música: [Lists matching products from the demonstration catalog]
 
-## 9. Uso de assistente de código
+Você: comparar modelos
+Empório da Música: [Compares the products found in the current session]
 
-O ChatGPT foi utilizado como assistente de desenvolvimento para apoiar a leitura do enunciado e das fontes, estruturar a arquitetura, implementar o protótipo, escrever documentação e sugerir testes. As decisões e o código devem ser revisados e compreendidos pelo candidato antes da entrega; a validação local e a autoria do histórico Git devem refletir o trabalho efetivamente realizado pelo candidato.
+Você: menor preço
+Empório da Música: [Sorts the previous result set by price]
+```
 
-## 10. Checklist de entrega
+A policy follow-up flow:
 
-- [ ] Criar repositório público no GitHub.
-- [ ] Revisar se os CSVs podem ser publicados; anonimizar dados pessoais se necessário.
-- [ ] Executar `pip install -r requirements.txt`.
-- [ ] Executar `python -m emporio_agent --rebuild-db`.
-- [ ] Executar `python -m pytest -q`.
-- [ ] Testar manualmente os exemplos no CLI.
-- [ ] Revisar README e exemplos.
-- [ ] Fazer commits progressivos e reais; não concentrar tudo em um commit artificial.
-- [ ] Enviar o link do repositório respondendo ao e-mail do processo seletivo.
-- [ ] Não alterar o repositório após o prazo/data de entrega informados pela Artefact.
+```text
+Você: explicar políticas da loja
+Empório da Música: [Lists available policy topics]
+
+Você: promoções
+Empório da Música: [Retrieves the relevant section from the policy manual]
+```
+
+These are representative interaction patterns. Exact wording and returned products depend on the supplied data.
+
+## Evaluation and tests
+
+Run the automated suite from the project root:
+
+```bash
+python -m pytest -q
+```
+
+**Validation record for release 3.2.1:** 41 tests passed when the consolidated release archive was tested. The tests cover the existing agent behaviors and regression cases for routing, policy follow-ups, product lookup, comparison, sorting, and session context.
+
+The test count is not a substitute for a quality metric. No claim of a particular code-coverage percentage, production accuracy, latency, or LLM evaluation score is made.
+
+### Manual smoke-test sequence
+
+```text
+Adriano
+explicar políticas da loja
+promoções
+atendimento
+sobre a loja
+comparar modelos
+catálogo
+comparar modelos
+guitarras
+comparar modelos
+menor preço
+maior estoque
+sair
+```
+
+The project was also manually exercised in Windows PowerShell during development. Before submitting a new environment or changing dependencies, rerun both the automated suite and the manual smoke test.
+
+## Engineering decisions
+
+### Deterministic tools for business facts
+
+Product, stock, promotion, and order data are retrieved through application functions and parameterized SQLite queries. The LLM is not allowed to generate arbitrary SQL or invent transactional facts. This reduces the risk of unsupported commercial claims and makes core behavior testable without an API call.
+
+### Explicit intent routing and session state
+
+The agent uses explicit routing rules and session-level state to support follow-up messages. This is intentionally simpler and more inspectable than delegating every decision to an LLM. It also means that unanticipated phrasings may require additional rules and regression tests.
+
+### Lexical policy retrieval
+
+The policy retriever uses token overlap against sections of the provided manual. This keeps the prototype lightweight and easy to run locally. It may retrieve adjacent or partially relevant sections, so retrieval quality should be evaluated before using the approach with a larger policy corpus.
+
+### Optional LLM response rewriting
+
+The LLM is an optional language layer, not the authority for business data. The deterministic mode is available for repeatable tests and environments without credentials.
+
+## Release history and known fixes
+
+The project was iteratively validated through V3.0, V3.1, and V3.2. The most important observed issues and corrections are recorded in [CHANGELOG.md](CHANGELOG.md).
+
+Examples include:
+- short commands such as “comparar” being mistaken for customer names;
+- policy topics such as “promoções” and “atendimento” being treated as names instead of follow-up answers;
+- pending comparison requests losing context when the customer first selected a category;
+- brand searches returning results that did not match the requested brand;
+- sorting commands not consistently using the previous result set.
+
+V3.2 addressed these observed regression cases. V3.2.1 changes documentation and package metadata only; it does not introduce new conversational behavior.
+
+## Security, privacy, and data handling
+
+- SQL statements use bound parameters for user-provided search values.
+- Order lookup requires both an order identifier and a customer-name check in this demonstration.
+- General catalog responses should not disclose customer contact details or unrelated orders.
+- Runtime history may contain user messages. Keep it local, restrict access, and define retention before any real deployment.
+- `.env`, local databases, caches, and runtime history are excluded from version control by the project configuration.
+- **Review the CSV contents before making the repository public.** The challenge dataset includes customer-related fields. Even if data is described as fictitious, verify that the files contain no real personal data and that publication is permitted. Remove or anonymize sensitive records where necessary.
+- This prototype does not execute refunds, cancellations, reservations, order changes, or other operational actions.
+- A production deployment would require an appropriate identity and access-control model, data-retention policy, security review, monitoring, and LGPD assessment.
+
+## Limitations and future work
+
+- **Rule-based routing:** add evaluated examples for new intents and ambiguous language; consider semantic classification only with measurable acceptance criteria.
+- **Lexical retrieval:** introduce relevance thresholds, retrieval evaluation, and optionally embeddings or reranking if the policy corpus grows.
+- **Static dataset:** integrate with authorized production APIs only if the challenge scope and permissions allow it.
+- **Identity verification:** replace name matching with a secure, channel-appropriate authentication flow before exposing real order data.
+- **Session persistence:** current conversational state is process-local; persistence requires explicit retention and access-control decisions.
+- **Observability:** add structured logs, latency measurements, error tracking, and conversation-level evaluation.
+- **Human handoff:** integrate a support queue or CRM if operational escalation becomes part of the scope.
+
+## Development transparency
+
+ChatGPT was used as a coding assistant to support challenge interpretation, architecture discussion, implementation, debugging, test design, and documentation. The project author remains responsible for reviewing, understanding, and being able to explain the code and engineering decisions.
+
+## License
+
+No open-source license is currently specified. Unless a license is added by the project owner, the repository should not be assumed to grant broad reuse or redistribution rights. Confirm the challenge terms before publishing or reusing supplied materials.
+
+---
+
+**Current release:** `3.2.1`  
+**Project type:** technical-challenge prototype  
+**Primary language:** Python  
+**Conversation language:** Brazilian Portuguese

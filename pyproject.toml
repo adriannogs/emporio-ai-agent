@@ -4,8 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "emporio-musica-agent"
-version = "1.0.0"
+version = "3.2.1"
 description = "Agente de atendimento híbrido para o desafio técnico AI Engineer"
+authors = [
+    { name = "Adriano Gomes", email = "adriannogs@gmail.com" }
+]
+
+
 requires-python = ">=3.10"
 dependencies = ["pandas>=2.2,<3.0", "python-dotenv>=1.0,<2.0", "openai>=1.30,<3.0"]
 
