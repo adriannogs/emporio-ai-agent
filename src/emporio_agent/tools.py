@@ -28,6 +28,11 @@ def search_products(term=None, category=None, max_price=None, available_only=Tru
     params.append(int(limit))
     return query(sql, params)
 
+def list_categories():
+    """Retorna as categorias existentes no catálogo, sem inventar opções."""
+    sql = """SELECT name, description FROM categories ORDER BY name"""
+    return query(sql)
+
 def product_details(term):
     rows = search_products(term=term, available_only=False, limit=8)
     if not rows:

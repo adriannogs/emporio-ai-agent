@@ -1,11 +1,14 @@
 """Retriever lexical leve para o manual de políticas; não exige serviço externo."""
 import re
+import unicodedata
 from pathlib import Path
 from .config import POLICY_PATH
 
 def _tokens(text):
-    stop = {"a","o","as","os","de","da","do","das","dos","e","em","no","na","nos","nas","um","uma","me","minha","meu","posso","qual","quais","é","ser","que","para","por","com"}
-    return {t for t in re.findall(r"[a-z0-9À-ÿ]+", text.lower()) if t not in stop and len(t) > 1}
+    stop = {"a","o","as","os","de","da","do","das","dos","e","em","no","na","nos","nas","um","uma","me","minha","meu","posso","qual","quais","e","ser","que","para","por","com"}
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return {t for t in re.findall(r"[a-z0-9]+", normalized) if t not in stop and len(t) > 1}
 
 def retrieve_policy(question, top_k=3):
     if not POLICY_PATH.exists():

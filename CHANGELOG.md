@@ -2,7 +2,22 @@
 
 All notable project changes are documented in this file.
 
-The project uses a simple versioning convention. V3.2.1 is a documentation and package-metadata release; it does not change runtime behavior.
+The project uses a simple versioning convention. V3.3.0 is a documentation and package-metadata release; it does not change runtime behavior.
+
+## [3.3.0] - 2026-11-03
+
+### Added
+- Dynamic product category listing from the database.
+- Improved generic catalog, price and availability interactions.
+- Expanded automated tests for customer service scenarios.
+
+### Improved
+- Text normalization for accent-insensitive intent recognition.
+- Policy retrieval with Unicode normalization.
+- Customer message routing and intent handling.
+
+### Tests
+- 41 automated tests passing.
 
 ## [3.2.1] - 2026-11-03
 

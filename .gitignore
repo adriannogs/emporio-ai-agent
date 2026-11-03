@@ -1,9 +1,25 @@
+# Ambiente Python
 .venv/
+venv/
 __pycache__/
-.pytest_cache/
 *.py[cod]
+*.egg-info/
+
+# Testes
+.pytest_cache/
+
+# Configurações e segredos
 .env
+
+# Banco de dados local
 data/*.db
+
+# Histórico de execução
 history/
+
+# Configurações locais do editor
 .vscode/
+
+# Sistema operacional
 .DS_Store
+Thumbs.db

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "emporio-musica-agent"
-version = "3.2.1"
+version = "3.3.0"
 description = "Agente de atendimento híbrido para o desafio técnico AI Engineer"
 authors = [
     { name = "Adriano Gomes", email = "adriannogs@gmail.com" }
