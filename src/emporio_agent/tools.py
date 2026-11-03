@@ -7,7 +7,7 @@ def _money(value):
 
 def search_products(term=None, category=None, max_price=None, available_only=True, limit=12):
     sql = """SELECT p.product_id, p.name, p.price_brl, p.stock_quantity, p.status,
-                    c.name AS category
+                    p.description, p.specs, c.name AS category
              FROM products p LEFT JOIN categories c ON c.category_id=p.category_id
              WHERE 1=1"""
     params = []

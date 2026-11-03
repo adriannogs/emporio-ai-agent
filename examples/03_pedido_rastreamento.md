@@ -1,13 +1,15 @@
-# Exemplo 3 — Situação não trivial: consulta de pedido com validação mínima
+# Exemplo 3 — Situação não trivial: consulta de pedido (simulação histórica)
+
+> **Contexto da demonstração:** esta conversa é uma simulação baseada exclusivamente na base fictícia fornecida para o desafio. O registro consultado contém uma previsão de entrega em **28/02/2026**, data passada em relação à elaboração deste exemplo. Portanto, a informação não representa rastreamento atual nem comprova a situação real de uma entrega.
 
 **Cliente:** Onde está meu pedido 8?
 
-**Agente:** Posso ajudar a consultar! Por segurança, envie o número do pedido e o nome completo utilizado na compra. Não compartilhe dados de pagamento.
+**Agente:** Posso consultar o pedido 8. Para localizar o registro correspondente, informe o nome completo utilizado na compra. Não envie dados de pagamento ou documentos pessoais.
 
-**Cliente:** Pedido 8, nome Ana Carolina Ferreira.
+**Cliente:** Ana Carolina Ferreira.
 
-**Agente:** Encontrei o pedido **#8** em nome de Ana Carolina Ferreira. Status informado: **shipped**. Rastreamento: **BRJL5544332BR**. Previsão cadastrada: **2026-02-28**.
+**Agente:** Encontrei o pedido **#8**, cadastrado em nome de Ana Carolina Ferreira. Na base demonstrativa, o status consta como **enviado (shipped)**. O código de rastreamento registrado é **BRJL5544332BR** e a previsão de entrega cadastrada era **28/02/2026**.
 
-Esses dados pertencem à base de demonstração e podem não refletir o status atual.
+Lembre-se: esses são dados históricos da base de demonstração, não uma consulta a uma transportadora ou a um sistema de pedidos em tempo real.
 
-**Nota:** a base de pedidos fornecida contém registros até março de 2026. A consulta exige número e nome, mas isso não equivale a autenticação robusta de titularidade. Em produção, substituir por OTP ou canal autenticado.
+**Nota sobre segurança:** neste protótipo, a consulta combina o número do pedido com o nome informado pelo cliente como uma validação mínima de correspondência. Esses dois dados, isoladamente, **não constituem autenticação robusta nem comprovam a titularidade do pedido**. Em um ambiente de produção, a consulta deveria ocorrer por um canal autenticado ou mediante um mecanismo adicional de verificação, como código de uso único (OTP), sem expor informações do pedido antes da validação.

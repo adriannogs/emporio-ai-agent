@@ -277,3 +277,129 @@ def test_topic_word_without_prior_policy_is_not_mistaken_for_name():
     for topic in ["promoções", "atendimento", "sobre a loja"]:
         answer = agent.respond(topic, f"topic-alone-{topic}")
         assert "Prazer," not in answer
+
+# V3.3: recomendação contextual baseada exclusivamente nos campos do catálogo.
+def test_recommendation_route_is_detected():
+    assert _route("Qual você recomenda para começar?") == "recommendation"
+    assert _route("Qual violão você indica para iniciante?") == "recommendation"
+
+
+def test_recommendation_uses_previous_catalog_results():
+    agent = EmporioAgent(use_llm=False)
+    session = "recommendation-context"
+    first = agent.respond("Quais opções de violões até R$ 1000?", session)
+    assert "Encontrei estas opções" in first
+    answer = agent.respond("Qual você recomenda para começar?", session)
+    assert "uma opção para avaliar" in answer.lower()
+    assert "Descrição cadastrada" in answer
+    assert "base de demonstração" in answer
+    assert "nylon ou aço" in answer.lower()
+
+
+def test_recommendation_without_context_asks_for_instrument():
+    agent = EmporioAgent(use_llm=False)
+    answer = agent.respond("Qual você recomenda para começar?", "recommendation-empty")
+    assert "qual instrumento" in answer.lower()
+
+
+def test_recommendation_with_category_queries_catalog():
+    agent = EmporioAgent(use_llm=False)
+    answer = agent.respond("Qual violão você recomenda para iniciante?", "recommendation-category")
+    assert "uma opção para avaliar" in answer.lower()
+    assert "R$" in answer
+    assert "base de demonstração" in answer.lower()
+
+
+def test_recommendation_context_is_isolated_between_sessions():
+    agent = EmporioAgent(use_llm=False)
+    agent.respond("Quais opções de violões?", "recommendation-session-a")
+    answer = agent.respond("Qual você recomenda para começar?", "recommendation-session-b")
+    assert "qual instrumento" in answer.lower()
+    assert "Tagima Memphis" not in answer
+
+
+def test_recommendation_does_not_claim_independent_quality_assessment():
+    agent = EmporioAgent(use_llm=False)
+    agent.respond("Quais opções de violões?", "recommendation-no-invention")
+    answer = agent.respond("Qual você recomenda para começar?", "recommendation-no-invention")
+    assert "não uma avaliação independente" in answer.lower()
+    assert "melhor qualidade" not in answer.lower()
+
+
+# V3.3.2: continuidade do diálogo de recomendação.
+def test_recommendation_reason_route_is_detected():
+    assert _route("Por que você recomenda esse modelo?") == "recommendation_reason"
+
+
+def test_recommendation_reason_uses_saved_recommended_product():
+    agent = EmporioAgent(use_llm=False)
+    session = "recommendation-reason"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    answer = agent.respond("Por que você recomenda esse modelo?", session)
+    assert "Tagima Memphis AC-39" in answer
+    assert "perfeito para quem está começando" in answer
+    assert "não representa uma avaliação independente" in answer
+
+
+def test_recommendation_reason_without_prior_recommendation_asks_to_recommend():
+    agent = EmporioAgent(use_llm=False)
+    answer = agent.respond("Por que você recomenda esse modelo?", "reason-empty")
+    assert "ainda não indiquei" in answer.lower()
+
+
+def test_cheaper_alternative_route_is_detected():
+    assert _route("Tem outra opção mais barata?") == "cheaper_alternative"
+
+
+def test_cheaper_alternative_reports_when_reference_is_already_cheapest():
+    agent = EmporioAgent(use_llm=False)
+    session = "cheaper-no-result"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    answer = agent.respond("Tem outra opção mais barata?", session)
+    assert "já é a opção de menor preço" in answer.lower()
+    assert "R$ 429,90" in answer
+
+
+def test_cheaper_alternative_only_returns_products_below_reference():
+    agent = EmporioAgent(use_llm=False)
+    session = "cheaper-filter"
+    rows = search_products(category="Violões", max_price=1000, available_only=True)
+    agent._get_session(session)["last_products"] = rows
+    agent._get_session(session)["recommended_product"] = next(
+        p for p in rows if p["name"] == "Yamaha C40 Nylon Natural"
+    )
+    answer = agent.respond("Tem outra opção mais barata?", session)
+
+    # O modelo de referência pode aparecer na introdução; ele não pode
+    # aparecer entre as alternativas nem ser listado como opção mais barata.
+    assert "Yamaha C40" in answer
+
+    alternative_lines = [
+        line for line in answer.splitlines()
+        if line.lstrip().startswith("- **")
+    ]
+    assert alternative_lines, f"Nenhuma alternativa foi listada. Resposta recebida:\n{answer}"
+    assert all("Yamaha C40" not in line for line in alternative_lines)
+    assert "Tagima Memphis AC-39" in answer
+
+    # Confere os preços exibidos: todos devem ser inferiores a R$ 599,90.
+    import re
+    displayed_prices = []
+    for line in alternative_lines:
+        match = re.search(r"R\$\s*([\d.]+,[\d]{2})", line)
+        assert match, f"Preço não identificado na alternativa: {line}"
+        displayed_prices.append(
+            float(match.group(1).replace(".", "").replace(",", "."))
+        )
+    assert all(price < 599.90 for price in displayed_prices)
+
+
+def test_recommendation_state_is_isolated_between_sessions():
+    agent = EmporioAgent(use_llm=False)
+    session_a = "recommendation-state-a"
+    agent.respond("Quais opções de violões até R$ 1000?", session_a)
+    agent.respond("Qual você recomenda para começar?", session_a)
+    answer = agent.respond("Por que você recomenda esse modelo?", "recommendation-state-b")
+    assert "ainda não indiquei" in answer.lower()

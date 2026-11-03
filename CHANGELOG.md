@@ -2,7 +2,38 @@
 
 All notable project changes are documented in this file.
 
-The project uses a simple versioning convention. V3.3.0 is a documentation and package-metadata release; it does not change runtime behavior.
+The project uses a simple versioning convention. The V3.3.2 release improves contextual product recommendations, catalog data retrieval, and package metadata.
+
+## [3.3.2] - 2026-11-03
+
+### Added
+- Contextual explanation of product recommendations.
+- Cheaper alternative identification based on the recommended product.
+- Session-level tracking of the recommended product.
+
+### Improved
+- Product recommendation follow-up handling.
+- Price-based alternative filtering.
+
+### Tests
+- Expanded automated test coverage.
+- 54 automated tests passing.
+
+## [3.3.1] - 2026-11-03
+
+### Added
+- Context-aware product recommendations based on the previously retrieved catalog results.
+- Product descriptions and specifications included in product search results.
+
+### Improved
+- Intent routing for recommendation requests.
+- Session context handling for product recommendations.
+- Deterministic recommendation responses based on available catalog data.
+
+### Tests
+- Added automated tests for recommendation intent detection and contextual behavior.
+- Preserved existing regression tests.
+- All 47 automated tests passing.
 
 ## [3.3.0] - 2026-11-03
 

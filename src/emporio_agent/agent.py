@@ -30,6 +30,24 @@ def _extract_price(text):
 def _money(v):
     return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
+
+def _is_beginner_friendly(product):
+    description = _normalize(str(product.get("description") or ""))
+    # Evita classificar explicitamente estudantes avançados como iniciantes.
+    if "avancado" in description or "avancados" in description:
+        return False
+    return any(term in description for term in (
+        "iniciante", "iniciantes", "comecando", "comecar",
+        "estudante", "estudantes", "aprendiz"
+    ))
+
+
+def _select_recommended_product(rows):
+    """Seleciona uma opção com base na descrição cadastrada e, em empate, no preço."""
+    beginner_rows = [p for p in rows if _is_beginner_friendly(p)]
+    candidates = beginner_rows or rows
+    return min(candidates, key=lambda p: float(p.get("price_brl") or 0)) if candidates else None
+
 def _find_order_id(text):
     m=re.search(r"(?:pedido|ordem)\s*(?:n[ºo.]?\s*)?#?\s*(\d{1,6})", text, re.I)
     return int(m.group(1)) if m else None
@@ -47,7 +65,11 @@ RESERVED_MESSAGES = {
     "sim", "nao", "talvez", "quero", "procuro", "busco", "mais detalhes",
     "explicar", "explicar politicas", "explicar politica", "politica", "politicas",
     "politicas da loja", "regras da loja", "menor preco", "mais barato", "mais cara",
-    "mais caro", "maior estoque", "menor estoque", "ordenar por preco"
+    "mais caro", "maior estoque", "menor estoque", "ordenar por preco",
+    "recomendar", "recomendacao", "qual voce recomenda", "qual voce indica",
+    "qual e melhor para comecar", "para iniciante", "para quem esta comecando",
+    "por que voce recomenda", "porque voce recomenda", "tem outra opcao mais barata",
+    "outra opcao mais barata", "mais barata que essa", "mais barato que esse"
 }
 
 
@@ -114,6 +136,31 @@ def _route(message):
         return "out_of_scope"
     if any(w in t for w in ["pedido", "rastreamento", "rastrear", "entrega do meu", "onde esta meu"]):
         return "order"
+    reason_phrases = [
+        "por que voce recomenda", "porque voce recomenda",
+        "por que recomenda", "porque recomenda",
+        "por que esse modelo", "por que esse", "qual o motivo da indicacao"
+    ]
+    if any(phrase in t for phrase in reason_phrases):
+        return "recommendation_reason"
+
+    cheaper_phrases = [
+        "outra opcao mais barata", "tem outra opcao mais barata",
+        "alguma opcao mais barata", "mais barata que essa",
+        "mais barato que esse", "outra mais barata", "outro mais barato"
+    ]
+    if any(phrase in t for phrase in cheaper_phrases):
+        return "cheaper_alternative"
+
+    recommendation_phrases = [
+        "recomenda", "recomendaria", "recomendacao", "qual voce indica",
+        "qual voce escolheria", "qual e melhor para comecar",
+        "qual seria melhor para comecar", "para iniciante",
+        "para iniciantes", "para quem esta comecando", "melhor opcao para mim",
+        "vale mais a pena"
+    ]
+    if any(phrase in t for phrase in recommendation_phrases):
+        return "recommendation"
     if any(w in t for w in ["promocao", "desconto", "oferta", "black friday"]):
         return "promotion"
 
@@ -172,13 +219,36 @@ class EmporioAgent:
         if key not in self.sessions:
             self.sessions[key] = {"name": None, "last_intent": None,
                                   "last_category": None, "last_products": [],
+                                  "recommended_product": None,
                                   "pending_action": None}
         return self.sessions[key]
 
     def _tool_context(self, message, intent, session=None):
         data={}
-        if intent == "comparison" or intent.startswith("sort_"):
+        if intent in {"comparison", "recommendation", "recommendation_reason", "cheaper_alternative"} or intent.startswith("sort_"):
             data["products"] = (session or {}).get("last_products", [])[:8]
+            data["recommended_product"] = (session or {}).get("recommended_product")
+            if intent == "recommendation" and not data["products"]:
+                normalized = _normalize(message)
+                recommendation_categories = {
+                    "violao": "Violões", "violoes": "Violões",
+                    "guitarra": "Guitarras", "guitarras": "Guitarras",
+                    "baixo": "Baixos", "baixos": "Baixos",
+                    "ukulele": "Ukuleles", "ukuleles": "Ukuleles",
+                    "bateria": "Baterias e Percussão", "baterias": "Baterias e Percussão",
+                    "percussao": "Baterias e Percussão",
+                    "teclado": "Teclados e Pianos", "teclados": "Teclados e Pianos",
+                    "piano": "Teclados e Pianos", "pianos": "Teclados e Pianos",
+                    "saxofone": "Instrumentos de Sopro", "flauta": "Instrumentos de Sopro",
+                    "sopro": "Instrumentos de Sopro",
+                    "cordas orquestrais": "Cordas Orquestrais",
+                    "violino": "Cordas Orquestrais", "violoncelo": "Cordas Orquestrais"
+                }
+                category = next((v for k, v in recommendation_categories.items() if k in normalized), None)
+                if category:
+                    data["products"] = search_products(
+                        category=category, available_only=True, limit=15
+                    )
         if intent == "catalog":
             data["categories"] = list_categories()
         if intent=="product":
@@ -238,6 +308,85 @@ class EmporioAgent:
                      "sort_highest_stock": "maior quantidade em estoque"}[intent]
             lines = [f"- **{p['name']}** — {_money(p['price_brl'])}; estoque informado: {p['stock_quantity']} un." for p in ordered[:8]]
             return f"Ordenei os produtos da consulta anterior por {label}:\n" + "\n".join(lines) + "\n\nOs dados refletem os arquivos de demonstração, não uma conexão com estoque em tempo real."
+        if intent == "recommendation_reason":
+            selected = ctx.get("recommended_product")
+            if not selected:
+                return "Ainda não indiquei um modelo nesta conversa. Posso primeiro pesquisar as opções disponíveis e, em seguida, explicar os critérios da indicação."
+            description = (selected.get("description") or "").strip()
+            details = f" A descrição cadastrada informa: {description}" if description else " O catálogo não possui uma descrição detalhada desse modelo."
+            return (
+                f"Indiquei **{selected['name']}** porque, "
+                f"conforme os dados cadastrados, ele custa {_money(selected['price_brl'])}."
+                f"{details} "
+                "Esse é o motivo da indicação preliminar; não representa uma avaliação independente de qualidade."
+            )
+
+        if intent == "cheaper_alternative":
+            rows = ctx.get("products", [])
+            selected = ctx.get("recommended_product")
+            if not selected:
+                return "Para procurar uma alternativa mais barata, primeiro preciso saber qual modelo estamos usando como referência. Quer que eu recomende um entre os produtos pesquisados?"
+            reference_price = float(selected.get("price_brl") or 0)
+            alternatives = [
+                p for p in rows
+                if p.get("product_id") != selected.get("product_id")
+                and float(p.get("price_brl") or 0) < reference_price
+            ]
+            alternatives.sort(key=lambda p: float(p.get("price_brl") or 0))
+            if not alternatives:
+                return (
+                    f"Entre os produtos desta consulta, **{selected['name']}** já é a opção de menor preço "
+                    f"({_money(reference_price)}). Não encontrei outra opção abaixo desse valor na lista apresentada. "
+                    "Posso pesquisar outras opções da categoria ou ampliar a faixa de preço."
+                )
+            lines = [
+                f"- **{p['name']}** — {_money(p['price_brl'])} "
+                f"(economia de {_money(reference_price - float(p['price_brl']))} em relação ao modelo indicado)"
+                for p in alternatives[:5]
+            ]
+            return (
+                f"Encontrei estas alternativas abaixo do preço de **{selected['name']}** "
+                f"({_money(reference_price)}):\n" + "\n".join(lines)
+                + "\n\nValores e disponibilidade conforme a base de demonstração."
+            )
+
+        if intent == "recommendation":
+            rows = ctx.get("products", [])
+            if not rows:
+                return (
+                    "Posso ajudar a escolher, sim! Qual instrumento você procura "
+                    "(violão, guitarra, teclado etc.)? Se já tiver uma faixa de preço "
+                    "em mente, pode me informar também."
+                )
+
+            selected = _select_recommended_product(rows)
+            candidates = [p for p in rows if _is_beginner_friendly(p)] or rows
+            if selected is None:
+                return "Não encontrei produtos suficientes no catálogo para formular uma indicação."
+            description = (selected.get("description") or "").strip()
+            stock = selected.get("stock_quantity", "não informado")
+            answer = (
+                f"Considerando apenas as informações cadastradas no catálogo, "
+                f"uma opção para avaliar é **{selected['name']}**. "
+                f"Preço informado: {_money(selected['price_brl'])}; "
+                f"estoque informado: {stock} unidade(s)."
+            )
+            if description:
+                answer += f"\n\nDescrição cadastrada: {description}"
+            alternatives = [p for p in candidates if p.get("product_id") != selected.get("product_id")]
+            if alternatives:
+                alternatives = sorted(alternatives, key=lambda p: float(p.get("price_brl") or 0))[:2]
+                answer += "\n\nOutras opções da consulta:"
+                answer += "\n" + "\n".join(
+                    f"- **{p['name']}** — {_money(p['price_brl'])}"
+                    for p in alternatives
+                )
+            answer += (
+                "\n\nEsta é uma indicação preliminar baseada na descrição e nos preços "
+                "da base de demonstração, não uma avaliação independente de qualidade "
+                "ou adequação. Para refinar a escolha, você prefere cordas de nylon ou aço?"
+            )
+            return answer
         if intent == "comparison":
             rows = ctx.get("products", [])
             if len(rows) < 2:
@@ -394,6 +543,10 @@ class EmporioAgent:
         ctx = self._tool_context(clean, intent, session)
         answer = self._deterministic_response(clean, intent, ctx)
 
+        if intent == "recommendation":
+            selected = _select_recommended_product(ctx.get("products", []))
+            if selected:
+                session["recommended_product"] = dict(selected)
         if intent == "product":
             rows = ctx.get("products", [])
             session["last_products"] = rows[:8] if rows else []
@@ -412,7 +565,7 @@ class EmporioAgent:
             # antes de escolher a categoria que deseja comparar.
             if session.get("pending_action") != "comparison":
                 session["last_intent"] = intent
-        elif intent not in {"comparison", "general", "policy", "policy_topic"} and not intent.startswith("sort_"):
+        elif intent not in {"comparison", "recommendation", "general", "policy", "policy_topic"} and not intent.startswith("sort_"):
             session["last_intent"] = intent
 
         if self.use_llm and intent in {"catalog", "product", "promotion", "order", "policy", "policy_topic", "general"}:

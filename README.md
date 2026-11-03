@@ -26,7 +26,7 @@ model.
 
   Item                    Status
   ----------------------- ---------------------------------------------
-  Current release         `3.3.0`
+  Current release         `3.3.1`
   Project type            Technical challenge prototype
   Primary language        Python 3.10+
   Validated environment   Python 3.12 / Windows
@@ -493,7 +493,7 @@ publishing or reusing supplied materials.
 
 ------------------------------------------------------------------------
 
-**Current release:** `3.3.0`\
+**Current release:** `3.3.1`\
 **Project type:** Technical challenge prototype\
 **Primary language:** Python\
 **Conversation language:** Brazilian Portuguese
