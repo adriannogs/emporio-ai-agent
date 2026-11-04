@@ -26,21 +26,28 @@ model.
 
   Item                    Status
   ----------------------- ---------------------------------------------
-  Current release         `3.3.2`
+  Current release         `3.3.4`
   Project type            Technical challenge prototype
   Primary language        Python 3.10+
-  Validated environment   Python 3.12 / Windows
+  Latest automated run    Python 3.13.5
   Interface               Command-line interface (CLI)
   Structured data         CSV imported into SQLite
   Policy retrieval        Lightweight lexical retrieval (RAG-style)
   LLM integration         Optional
-  Automated tests         41 passing in the validated V3.3.0 codebase
+  Automated tests         73 passing in the V3.3.4 validation run
 
-**V3.3.0 introduces functional improvements** to customer message
-routing, accent-insensitive text normalization, dynamic catalog category
-discovery, and generic catalog, pricing, and availability interactions.
-The release also expands automated regression tests while preserving
-deterministic business-data retrieval.
+**V3.3.4 corrects intent priority when a customer starts a new catalog
+search during an active recommendation flow.** Explicit search requests
+such as "Quais opções de violões até R$ 500?" now take precedence over
+pending recommendation prompts. The agent resets the active search filters
+and recommendation history, performs a fresh catalog query, and preserves
+the customer identity and conversation history.
+
+The release retains the V3.3.3 contextual recommendation behavior:
+short replies such as "Nylon" or "Yamaha até R$ 1.500" can refine an
+active recommendation flow, and subsequent suggestions exclude products
+already recommended in that search. Catalog facts remain grounded in the
+supplied demonstration dataset.
 
 ## Key capabilities
 
@@ -56,6 +63,12 @@ deterministic business-data retrieval.
     previous catalog query in the same session.
 -   **Contextual sorting:** Sort the previous result set by lowest
     price, highest price, or highest recorded stock.
+-   **Contextual recommendations:** Refine suggestions using explicit
+    preferences such as string type, brand, and maximum price.
+-   **Recommendation history:** Avoid repeating products already
+    recommended in the same conversation session.
+-   **Sequential alternatives:** Request another compatible product
+    while retaining category, budget, and preference filters.
 -   **Generic catalog inquiries:** Present available categories when
     customers request a general catalog overview.
 -   **Generic pricing inquiries:** Ask for product or model
@@ -73,8 +86,9 @@ deterministic business-data retrieval.
 -   **Policy questions:** Retrieve relevant sections from the store
     policy manual, including payment, returns, shipping, warranty, store
     information, customer service, and privacy.
--   **Session context:** Retain conversational state within a session
-    and isolate different session identifiers.
+-   **Session context:** Retain conversational state within a session,
+    including product results, category, budget, explicit preferences,
+    and recommended product identifiers; isolate different session IDs.
 -   **Out-of-scope handling:** Explain that the store sells musical
     instruments, not accessories, and redirect unrelated requests.
 
@@ -177,7 +191,8 @@ emporio_ai_agent/
 │   ├── 01_catalogo_violao.md
 │   ├── 02_preco_produto.md
 │   ├── 03_pedido_rastreamento.md
-│   └── 04_devolucao_e_escopo.md
+│   ├── 04_devolucao_e_escopo.md
+│   └── 05_recomendacao_contextual.md
 ├── history/                  # Local runtime history; not committed
 ├── src/
 │   └── emporio_agent/
@@ -322,7 +337,21 @@ Run the automated test suite from the project root:
 python -m pytest -q
 ```
 
-### V3.3.0 validation record
+### V3.3.4 validation record
+
+**73 automated tests passed** in the current Python validation environment.
+The suite retains all 68 V3.3.3 tests and adds 5 regression tests for
+explicit catalog-search priority, scoped context reset, recommendations
+after a new search, continued brand/budget refinement, and preservation
+of customer identity.
+
+A manual end-to-end smoke test also exercised a new R$ 500 search after a
+recommendation flow, a new recommendation from those results, and a later
+Yamaha/ R$ 1,500 refinement. This is a development validation result,
+not a production-readiness or real-inventory claim. The maintainer should
+rerun the suite on Windows/Python 3.12 before publishing the release.
+
+### Historical V3.3.0 validation record
 
 **41 automated tests passed in the Windows development environment using
 Python 3.12.**
@@ -352,9 +381,10 @@ maior estoque
 sair
 ```
 
-The project was manually exercised in Windows PowerShell during
-development. Before submitting a new environment or changing
-dependencies, rerun both the automated suite and the manual smoke test.
+The V3.3.0 development line was manually exercised in Windows
+PowerShell. The V3.3.4 automated result was executed in the current validation
+environment; a local Windows/Python 3.12 rerun is required before
+publishing the release tag.
 
 ## Engineering decisions
 
@@ -407,6 +437,16 @@ environments without credentials.
 
   V3.2.1                              Documentation consolidation and
                                       package metadata
+
+  **V3.3.4**                          New-search priority and scoped context reset,
+                                      sequential recommendations, and
+                                      recommendation history
+
+  **V3.3.2**                          Recommendation explanations and
+                                      cheaper alternatives
+
+  **V3.3.1**                          Contextual product recommendations
+                                      based on catalog results
 
   **V3.3.0**                          Improved intent routing, text
                                       normalization, dynamic category
@@ -493,7 +533,7 @@ publishing or reusing supplied materials.
 
 ------------------------------------------------------------------------
 
-**Current release:** `3.3.2`\
+**Current release:** `3.3.4`\
 **Project type:** Technical challenge prototype\
 **Primary language:** Python\
 **Conversation language:** Brazilian Portuguese

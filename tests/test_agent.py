@@ -403,3 +403,229 @@ def test_recommendation_state_is_isolated_between_sessions():
     agent.respond("Qual você recomenda para começar?", session_a)
     answer = agent.respond("Por que você recomenda esse modelo?", "recommendation-state-b")
     assert "ainda não indiquei" in answer.lower()
+
+
+# V3.3.3: refinamento contextual e recomendações sucessivas.
+def test_short_nylon_reply_is_saved_as_recommendation_preference():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-nylon"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    answer = agent.respond("Nylon.", session)
+    state = agent._get_session(session)
+    assert state["preferred_specs"]["strings"] == "nylon"
+    assert state["pending_action"] == "recommendation_alternative"
+    assert "cordas de nylon" in answer.lower()
+
+
+def test_next_recommendation_respects_nylon_and_excludes_previous_product():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-next-nylon"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    first = agent.respond("Qual você recomenda para começar?", session)
+    agent.respond("Nylon.", session)
+    answer = agent.respond("Então me indique outra opção.", session)
+    assert "Tagima Memphis AC-39" in first
+    assert "Rozini RC-104 Nylon Estudante" in answer
+    assert "Tagima Memphis AC-39" not in answer
+    assert "Descrição cadastrada" in answer
+
+
+def test_recommendation_followup_route_is_detected():
+    assert _route("Então me indique outra opção.") == "next_recommendation"
+    assert _route("Quero outra alternativa") == "next_recommendation"
+
+
+def test_cheaper_alternative_keeps_priority_over_next_recommendation():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-cheaper-priority"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    answer = agent.respond("Tem outra opção mais barata?", session)
+    assert "já é a opção de menor preço" in answer.lower()
+
+
+def test_recommendation_excludes_every_previously_recommended_product():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-no-repeat"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    first = agent.respond("Qual você recomenda para começar?", session)
+    agent.respond("Nylon.", session)
+    second = agent.respond("Me indique outra opção.", session)
+    state = agent._get_session(session)
+    assert len(state["recommended_product_ids"]) == 2
+    assert state["recommended_product_ids"][0] != state["recommended_product_ids"][1]
+    assert "Tagima Memphis AC-39" in first
+    assert "Tagima Memphis AC-39" not in second
+
+
+def test_brand_preference_is_applied_to_next_recommendation():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-brand"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    agent.respond("Yamaha.", session)
+    answer = agent.respond("Outra opção, por favor.", session)
+    assert "Yamaha" in answer
+    assert "Tagima" not in answer
+    assert agent._get_session(session)["preferred_specs"]["brand"] == "yamaha"
+
+
+def test_budget_preference_is_applied_to_next_recommendation():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-budget"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    agent.respond("Até R$ 500.", session)
+    answer = agent.respond("Outra opção.", session)
+    assert "R$ 459,90" in answer
+    assert agent._get_session(session)["preferred_specs"]["max_price"] == 500.0
+
+
+def test_incompatible_preferences_return_transparent_no_result():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-no-match"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    agent.respond("Yamaha até R$ 400.", session)
+    answer = agent.respond("Outra opção.", session)
+    assert "não encontrei outra opção disponível" in answer.lower()
+
+
+def test_recommendation_preferences_do_not_leak_between_sessions():
+    agent = EmporioAgent(use_llm=False)
+    agent.respond("Quais opções de violões até R$ 1000?", "v333-session-a")
+    agent.respond("Qual você recomenda para começar?", "v333-session-a")
+    agent.respond("Nylon.", "v333-session-a")
+    state_b = agent._get_session("v333-session-b")
+    assert state_b["preferred_specs"] == {}
+    assert state_b["recommended_product_ids"] == []
+    answer = agent.respond("Então me indique outra opção.", "v333-session-b")
+    assert "qual instrumento" in answer.lower()
+
+
+def test_recommendation_preference_does_not_trigger_without_pending_recommendation():
+    agent = EmporioAgent(use_llm=False)
+    answer = agent.respond("Nylon.", "v333-no-pending")
+    assert "Prazer," not in answer
+    assert agent._get_session("v333-no-pending")["preferred_specs"] == {}
+
+
+def test_recommendation_context_preserves_category_and_budget():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-preserve-context"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    agent.respond("Nylon.", session)
+    agent.respond("Então me indique outra opção.", session)
+    state = agent._get_session(session)
+    assert state["last_category"] == "Violões"
+    assert state["last_budget"] == 1000.0
+    assert state["preferred_specs"]["strings"] == "nylon"
+
+
+def test_steel_preference_filters_the_next_recommendation():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-steel"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    agent.respond("Aço.", session)
+    answer = agent.respond("Outra opção.", session)
+    assert "cordas de aço" in answer.lower()
+    assert "Yamaha F310 Aço Natural" in answer
+    assert "Tagima Memphis AC-39" not in answer
+
+
+def test_expanded_budget_refreshes_the_category_catalog():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-expanded-budget"
+    agent.respond("Quais opções de violões até R$ 500?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    agent.respond("Yamaha até R$ 1500.", session)
+    answer = agent.respond("Outra opção.", session)
+    assert "Yamaha C40 Nylon Natural" in answer
+    assert agent._get_session(session)["last_budget"] == 1500.0
+
+
+def test_recommendation_rephrasing_does_not_repeat_previous_product():
+    agent = EmporioAgent(use_llm=False)
+    session = "v333-rephrased-next"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    first = agent.respond("Qual você recomenda para começar?", session)
+    second = agent.respond("Qual outro você recomenda?", session)
+    assert "Tagima Memphis AC-39" in first
+    assert "Tagima Memphis AC-39" not in second
+    assert "Rozini RC-104 Nylon Estudante" in second
+
+# V3.3.4: prioridade de novas pesquisas sobre estados pendentes de recomendação.
+def test_explicit_catalog_search_preempts_pending_recommendation_and_resets_filters():
+    agent = EmporioAgent(use_llm=False)
+    session = "v334-new-search-priority"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    agent.respond("Nylon.", session)
+
+    answer = agent.respond("Quais opções de violões até R$ 500?", session)
+    state = agent._get_session(session)
+
+    assert "Encontrei estas opções" in answer
+    assert "R$ 500,00" in answer
+    assert "Tagima Memphis AC-39" in answer
+    assert state["last_budget"] == 500
+    assert state["preferred_specs"].get("max_price") == 500
+    assert "strings" not in state["preferred_specs"]
+    assert state["recommended_product"] is None
+    assert state["recommended_product_ids"] == []
+    assert state["pending_action"] is None
+
+
+def test_recommendation_after_new_budget_search_uses_new_catalog_results():
+    agent = EmporioAgent(use_llm=False)
+    session = "v334-recommend-after-new-search"
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    answer = agent.respond("Quais opções de violões até R$ 500?", session)
+    assert "R$  500" not in answer
+
+    recommendation = agent.respond("Qual você recomenda para começar?", session)
+    assert "uma opção para avaliar" in recommendation.lower()
+    assert "Tagima Memphis AC-39" in recommendation or "Rozini RC-104" in recommendation
+    assert "R$ 500" not in recommendation or "R$ 429,90" in recommendation or "R$ 459,90" in recommendation
+
+
+def test_brand_and_budget_refinement_remains_contextual_after_new_search():
+    agent = EmporioAgent(use_llm=False)
+    session = "v334-brand-budget-refinement"
+    agent.respond("Quais opções de violões até R$ 500?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    answer = agent.respond("Yamaha até R$ 1500.", session)
+    state = agent._get_session(session)
+
+    assert "marca Yamaha" in answer
+    assert state["preferred_specs"]["brand"] == "yamaha"
+    assert state["preferred_specs"]["max_price"] == 1500
+    assert state["last_budget"] == 1500
+
+    alternative = agent.respond("Outra opção.", session)
+    assert "Yamaha" in alternative
+    assert "C70" in alternative or "C40" in alternative
+
+
+def test_explicit_catalog_search_does_not_clear_customer_identity():
+    agent = EmporioAgent(use_llm=False)
+    session = "v334-preserve-customer-name"
+    agent.respond("Adriano", session)
+    agent.respond("Quais opções de violões até R$ 1000?", session)
+    agent.respond("Qual você recomenda para começar?", session)
+    agent.respond("Quais opções de violões até R$ 500?", session)
+    answer = agent.respond("Oi", session)
+    assert "Adriano" in answer
+
+
+def test_explicit_catalog_search_detector_is_conservative_for_short_preferences():
+    from emporio_agent.agent import _is_explicit_catalog_search
+    assert _is_explicit_catalog_search("Quais opções de violões até R$ 500?")
+    assert _is_explicit_catalog_search("Me mostre violões")
+    assert not _is_explicit_catalog_search("Yamaha até R$ 1500")
+    assert not _is_explicit_catalog_search("Nylon")
+    assert not _is_explicit_catalog_search("Outra opção")

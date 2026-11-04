@@ -178,6 +178,32 @@ passing tests**.
 reviewed the results, and remained responsible for deciding whether the
 observed behavior was acceptable.
 
+### 3.7 Contextual recommendation refinement (V3.3.3)
+
+**Topic discussed:** How to preserve conversational context when customers answer a recommendation question with short preferences and then request another option.
+
+**Engineering direction adopted:** The agent maintains session-scoped preference fields, the active category and budget, the currently recommended product, and the identifiers of products already recommended. Explicit replies such as string type, supported brand, or maximum price are parsed by deterministic rules. The next recommendation reuses the category, refreshes the catalog query, applies the active filters to catalog data, and excludes previously recommended products.
+
+**Rationale:** This approach makes follow-up behavior inspectable and testable without treating the LLM as the source of product facts. It also makes the no-match condition explicit instead of silently relaxing customer preferences.
+
+**Human ownership:** The project author remains responsible for reviewing the state transitions, catalog filters, test results, and limitations of this rule-based preference parser.
+
+**Validation record:** The V3.3.3 validation run completed with 68 passing automated tests: the 54 V3.3.2 regression tests plus 14 new contextual recommendation tests. The recorded execution environment is not a production deployment or a live-inventory integration.
+
+### 3.8 New catalog search precedence (V3.3.4)
+
+**Topic discussed:** A customer could start a new product search while the agent was waiting for a short recommendation preference. The pending-state handler could interpret the new search's price limit as a preference update, leaving the previous catalog context active.
+
+**Engineering direction adopted:** An explicit catalog-search phrase is now recognized before recommendation and policy follow-up handlers. The active product-search context is reset, and the new message is routed through the regular product-search path. The reset is scoped: customer identity and conversation history remain available, while prior catalog rows, category, budget, preference filters, recommended product, recommendation identifiers, and the pending action are cleared.
+
+**Preserved behavior:** Short replies such as "Nylon" and attribute refinements such as "Yamaha até R$ 1.500" remain contextual when the customer is continuing an existing recommendation flow rather than explicitly starting a new search.
+
+**Rationale:** This prevents stale search results and pending conversational state from overriding a clear customer instruction. The implementation remains deterministic and inspectable; the phrase detector is intentionally bounded and requires regression tests when new phrasings are introduced.
+
+**Human ownership:** The project author remains responsible for reviewing the routing precedence, state reset boundaries, catalog query results, and test evidence.
+
+**Validation record:** The V3.3.4 validation run completed with 73 passing automated tests: 68 retained V3.3.3 tests and 5 new regression tests. The manual conversation was exercised in the validation environment. Windows/Python 3.12 validation remains pending before release publication.
+
 ## 4. Human review and decision ownership
 
 AI-generated output was treated as material for consideration and
@@ -217,8 +243,9 @@ The following practices were used to support review of AI-assisted work:
 -   **Manual execution:** exercise representative customer conversations
     in the local CLI.
 
-The recorded V3.3.0 result is 41 passing tests in the validated Windows
-development environment. This is not a claim of complete test coverage,
+The V3.3.4 validation run recorded 73 passing tests in the project
+validation environment. Earlier release-specific results are retained in
+the changelog. These results are not a claim of complete test coverage,
 production readiness, or a measured model-accuracy score.
 
 ## 6. Limitations of AI assistance
@@ -253,6 +280,6 @@ learning---not to conceal authorship or replace engineering judgment.
 ------------------------------------------------------------------------
 
 **Project:** Empório AI Agent\
-**Release documented:** `3.3.0`\
+**Release documented:** `3.3.4`\
 **Primary language:** Python\
 **Repository:** https://github.com/adriannogs/emporio-ai-agent

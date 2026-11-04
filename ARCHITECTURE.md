@@ -60,7 +60,9 @@ The CSV files are loaded into SQLite by `database.initialize_database()`. The `t
 
 ### Session context
 
-The agent maintains context by `session_id`. The context supports follow-up requests such as selecting a policy topic, completing a comparison request, or sorting the last product result set. The conversational state is in process memory and should not be treated as durable storage or authenticated identity.
+The agent maintains context by `session_id`. The context supports policy-topic selection, comparisons, sorting, and sequential product recommendations. Recommendation state includes the last catalog result set, category, maximum budget, explicit product preferences (for example, string type and brand), the current recommended product, and identifiers of products already recommended in that session. Short replies are interpreted as preference updates only while a recommendation refinement is pending.
+
+Before producing another recommendation or a cheaper alternative, the agent refreshes the category query using the active budget, applies explicit preference filters against catalog descriptions and structured `specs`, and excludes previously recommended product IDs from alternative listings. The recommendation history is scoped to the in-memory session object; it is not shared across session IDs and is not durable across process restarts. Session context is not an authenticated identity.
 
 ### LLM boundary
 
@@ -78,7 +80,7 @@ The `--no-llm` option provides a deterministic mode for repeatable local evaluat
 | Module | Responsibility |
 |---|---|
 | `cli.py` | Parse command-line options, initialize SQLite, run the interactive loop |
-| `agent.py` | Normalize messages, route intents, maintain session state, orchestrate tools, format responses |
+| `agent.py` | Normalize messages, route intents, maintain session state and recommendation preferences/history, orchestrate tools, format responses |
 | `tools.py` | Execute deterministic, parameterized queries for catalog, promotions, and orders |
 | `database.py` | Load CSV data into SQLite and provide query access |
 | `policies.py` | Retrieve relevant policy-manual sections using lexical token overlap |
@@ -103,6 +105,12 @@ A lexical retriever is easy to run locally and introduces no embedding service o
 
 Short follow-up messages are common in customer service. Session-scoped state enables continuity for policy topics, comparisons, and sorting. The current implementation is process-local; multi-process or persistent deployment would require a shared state store and explicit lifecycle/retention rules.
 
+### Contextual recommendation refinement
+
+Recommendation follow-ups use deterministic state transitions. After an initial recommendation, the agent may capture a short preference response (string type, supported brand, or maximum price). A subsequent request for another option re-queries the same category, applies the current filters to catalog fields, and excludes product IDs already recommended in that session. If no compatible product remains, the agent states that no match was found instead of relaxing filters silently.
+
+The selection heuristic prioritizes products whose catalog description explicitly references beginners or students, then uses price as a tie-breaker. This is a transparent catalog-based heuristic, not a personalized ranking model or an independent product-quality assessment.
+
 ### Optional LLM rewriting
 
 The optional model can improve conversational fluency, but it is not the source of truth. The deterministic path remains available and should be used as the baseline during debugging and evaluation.
@@ -121,14 +129,15 @@ The optional model can improve conversational fluency, but it is not the source 
 - Static CSV snapshot; no live inventory, order, payment, or shipping integration.
 - Rule-based intent routing; unrecognized phrasings may fall through to a generic response.
 - Lexical policy retrieval; no embeddings, reranking, or calibrated relevance threshold.
-- Session context is volatile and process-local.
+- Session context and recommendation history are volatile and process-local.
+- Preference extraction is rule-based and supports a bounded set of explicit attributes; it is not a general natural-language preference parser.
 - Customer-name matching is not sufficient authentication for real customer data.
 - The prototype does not execute refunds, cancellations, reservations, or order changes.
 - No production SLA, load test, latency target, or model-quality benchmark is claimed.
 
 ## 9. Evaluation strategy
 
-The current suite includes 41 automated tests. For further development, evaluate the system at multiple levels:
+The V3.3.4 suite includes 73 automated tests in the recorded validation run. For further development, evaluate the system at multiple levels:
 
 1. **Intent routing:** precision/recall by intent and confusion matrix for ambiguous short messages.
 2. **Tool correctness:** verify SQL filters, product matching, stock handling, and promotion eligibility.
@@ -139,3 +148,16 @@ The current suite includes 41 automated tests. For further development, evaluate
 7. **Operational behavior:** measure latency, error rates, and behavior under concurrent sessions before any deployment.
 
 No metric beyond the recorded automated test result should be claimed until the corresponding evaluation is implemented and executed.
+
+
+## New catalog search precedence (V3.3.4)
+
+An explicit catalog-search phrase is evaluated before pending recommendation
+refinement. When detected, the agent clears the active search context
+(`last_products`, `catalog_products`, category, budget, preference filters,
+recommended product, recommendation IDs, and pending action) and routes the
+message normally. The product tool then performs a fresh query. Session identity
+and persisted conversation history are not cleared. Short attribute replies
+such as a brand or string type remain preference refinements when no explicit
+new-search phrase is present. This is a deterministic phrase-based rule, not a
+general natural-language classifier; new phrasings should be covered by tests.
