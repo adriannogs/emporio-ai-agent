@@ -48,6 +48,83 @@ def _select_recommended_product(rows):
     candidates = beginner_rows or rows
     return min(candidates, key=lambda p: float(p.get("price_brl") or 0)) if candidates else None
 
+
+def _extract_recommendation_preferences(message):
+    """Extrai preferências explícitas sem inferir atributos não informados."""
+    normalized = _normalize(message)
+    preferences = {}
+    if re.search(r"\bnylon\b", normalized):
+        preferences["strings"] = "nylon"
+    elif re.search(r"\baco\b", normalized):
+        preferences["strings"] = "steel"
+
+    brands = ["yamaha", "tagima", "giannini", "rozini", "shelby", "takamine",
+              "fender", "gibson", "ibanez", "prs", "martin", "taylor",
+              "strinberg", "kala", "kalani", "ohana"]
+    brand = next((item for item in brands if re.search(rf"\b{re.escape(item)}\b", normalized)), None)
+    if brand:
+        preferences["brand"] = brand
+    maximum = _extract_price(message)
+    if maximum is not None:
+        preferences["max_price"] = maximum
+    return preferences
+
+
+def _product_matches_preferences(product, preferences):
+    """Aplica filtros apenas sobre campos efetivamente presentes no catálogo."""
+    if not preferences:
+        return True
+    specs = product.get("specs") or {}
+    if isinstance(specs, str):
+        try:
+            specs = json.loads(specs)
+        except (TypeError, ValueError):
+            specs = {}
+    searchable = _normalize(" ".join([
+        str(product.get("name") or ""),
+        str(product.get("description") or ""),
+        " ".join(str(v) for v in specs.values()) if isinstance(specs, dict) else str(specs),
+    ]))
+    strings = preferences.get("strings")
+    if strings:
+        spec_strings = _normalize(str(specs.get("strings", ""))) if isinstance(specs, dict) else ""
+        if strings not in spec_strings and strings not in searchable:
+            return False
+    brand = preferences.get("brand")
+    if brand and not re.search(rf"\b{re.escape(brand)}\b", _normalize(str(product.get("name") or ""))):
+        return False
+    maximum = preferences.get("max_price")
+    if maximum is not None and float(product.get("price_brl") or 0) > float(maximum):
+        return False
+    return True
+
+
+def _is_explicit_catalog_search(message):
+    """Identifica uma nova pesquisa explícita, mesmo durante um fluxo pendente.
+
+    A detecção é intencionalmente conservadora: respostas curtas como "Yamaha"
+    ou "Nylon" continuam sendo refinamentos quando há uma recomendação pendente.
+    """
+    normalized = _normalize(message).strip(" ?.!\t")
+    search_phrases = (
+        "quais opcoes", "quais produtos", "quais instrumentos",
+        "me mostre", "mostre os", "mostrar produtos", "ver produtos",
+        "liste os", "listar", "buscar produtos", "pesquisar produtos",
+        "quero ver", "quero conhecer", "procuro opcoes", "busco opcoes",
+    )
+    return any(normalized.startswith(phrase) for phrase in search_phrases)
+
+
+def _is_next_recommendation_request(message):
+    normalized = _normalize(message)
+    phrases = (
+        "outra opcao", "outra alternativa", "me indique outra",
+        "me recomenda outra", "mais uma opcao", "proxima opcao",
+        "entao me indique", "entao indique outra", "indique outro modelo",
+        "quero outra opcao", "tem outro modelo"
+    )
+    return any(phrase in normalized for phrase in phrases)
+
 def _find_order_id(text):
     m=re.search(r"(?:pedido|ordem)\s*(?:n[ºo.]?\s*)?#?\s*(\d{1,6})", text, re.I)
     return int(m.group(1)) if m else None
@@ -66,7 +143,7 @@ RESERVED_MESSAGES = {
     "explicar", "explicar politicas", "explicar politica", "politica", "politicas",
     "politicas da loja", "regras da loja", "menor preco", "mais barato", "mais cara",
     "mais caro", "maior estoque", "menor estoque", "ordenar por preco",
-    "recomendar", "recomendacao", "qual voce recomenda", "qual voce indica",
+    "recomendar", "recomendacao", "qual voce recomenda", "qual voce indica", "nylon", "aco",
     "qual e melhor para comecar", "para iniciante", "para quem esta comecando",
     "por que voce recomenda", "porque voce recomenda", "tem outra opcao mais barata",
     "outra opcao mais barata", "mais barata que essa", "mais barato que esse"
@@ -161,6 +238,8 @@ def _route(message):
     ]
     if any(phrase in t for phrase in recommendation_phrases):
         return "recommendation"
+    if _is_next_recommendation_request(message):
+        return "next_recommendation"
     if any(w in t for w in ["promocao", "desconto", "oferta", "black friday"]):
         return "promotion"
 
@@ -217,17 +296,34 @@ class EmporioAgent:
     def _get_session(self, session_id):
         key = str(session_id or "default")[:128]
         if key not in self.sessions:
-            self.sessions[key] = {"name": None, "last_intent": None,
-                                  "last_category": None, "last_products": [],
-                                  "recommended_product": None,
-                                  "pending_action": None}
+            self.sessions[key] = {
+                "name": None,
+                "last_intent": None,
+                "last_category": None,
+                "last_products": [],
+                "catalog_products": [],
+                "last_budget": None,
+                "preferred_specs": {},
+                "recommended_product": None,
+                "recommended_product_ids": [],
+                "pending_action": None,
+            }
         return self.sessions[key]
 
     def _tool_context(self, message, intent, session=None):
         data={}
-        if intent in {"comparison", "recommendation", "recommendation_reason", "cheaper_alternative"} or intent.startswith("sort_"):
-            data["products"] = (session or {}).get("last_products", [])[:8]
+        if intent in {"comparison", "recommendation", "recommendation_reason", "cheaper_alternative", "next_recommendation", "preference_update"} or intent.startswith("sort_"):
+            source_products = (session or {}).get("catalog_products") or (session or {}).get("last_products", [])
+            data["products"] = source_products[:50]
             data["recommended_product"] = (session or {}).get("recommended_product")
+            if intent in {"next_recommendation", "cheaper_alternative"} and (session or {}).get("last_category"):
+                budget = (session or {}).get("preferred_specs", {}).get("max_price")
+                data["products"] = search_products(
+                    category=(session or {}).get("last_category"),
+                    max_price=budget,
+                    available_only=True,
+                    limit=50,
+                )
             if intent == "recommendation" and not data["products"]:
                 normalized = _normalize(message)
                 recommendation_categories = {
@@ -330,10 +426,17 @@ class EmporioAgent:
             alternatives = [
                 p for p in rows
                 if p.get("product_id") != selected.get("product_id")
+                and p.get("product_id") not in set(ctx.get("recommended_product_ids", []))
                 and float(p.get("price_brl") or 0) < reference_price
+                and _product_matches_preferences(p, ctx.get("preferred_specs", {}))
             ]
             alternatives.sort(key=lambda p: float(p.get("price_brl") or 0))
             if not alternatives:
+                if not _product_matches_preferences(selected, ctx.get("preferred_specs", {})):
+                    return (
+                        f"Não encontrei uma alternativa abaixo de {_money(reference_price)} que também "
+                        "atenda às preferências informadas. Posso ampliar o orçamento ou retirar algum filtro."
+                    )
                 return (
                     f"Entre os produtos desta consulta, **{selected['name']}** já é a opção de menor preço "
                     f"({_money(reference_price)}). Não encontrei outra opção abaixo desse valor na lista apresentada. "
@@ -350,8 +453,51 @@ class EmporioAgent:
                 + "\n\nValores e disponibilidade conforme a base de demonstração."
             )
 
+        if intent == "preference_update":
+            preferences = ctx.get("preferred_specs", {})
+            labels = []
+            if preferences.get("strings"):
+                labels.append("cordas de nylon" if preferences["strings"] == "nylon" else "cordas de aço")
+            if preferences.get("brand"):
+                labels.append(f"marca {preferences['brand'].title()}")
+            if preferences.get("max_price") is not None:
+                labels.append(f"preço até {_money(preferences['max_price'])}")
+            detail = ", ".join(labels) if labels else "as preferências informadas"
+            return f"Perfeito! Vou considerar {detail} nas próximas sugestões e manter o instrumento e a faixa de preço da nossa pesquisa. Quer que eu indique outra opção?"
+        if intent == "next_recommendation":
+            rows = ctx.get("products", [])
+            if not rows:
+                if ctx.get("last_category"):
+                    return "Não encontrei outra opção disponível que atenda à categoria e aos filtros registrados nesta conversa. Posso ampliar o orçamento ou retirar alguma preferência."
+                return "Posso indicar outra opção, sim! Qual instrumento ou categoria você procura? Se já tiver uma faixa de preço, pode me informar também."
+            preferences = ctx.get("preferred_specs", {})
+            excluded = set(ctx.get("recommended_product_ids", []))
+            candidates = [
+                product for product in rows
+                if product.get("product_id") not in excluded
+                and _product_matches_preferences(product, preferences)
+            ]
+            selected = _select_recommended_product(candidates)
+            if not selected:
+                return "Não encontrei outra opção disponível que atenda a todas as preferências registradas nesta conversa. Posso retirar algum filtro ou pesquisar outra categoria."
+            description = (selected.get("description") or "").strip()
+            answer = (
+                f"Outra opção para avaliar é **{selected['name']}**. "
+                f"Preço informado: {_money(selected['price_brl'])}; "
+                f"estoque informado: {selected.get('stock_quantity', 'não informado')} unidade(s)."
+            )
+            if description:
+                answer += f"\n\nDescrição cadastrada: {description}"
+            if preferences.get("strings"):
+                string_label = "nylon" if preferences["strings"] == "nylon" else "aço"
+                answer += f"\n\nPreferência aplicada: cordas de {string_label}."
+            answer += "\n\nA indicação considera os filtros informados e os dados da base de demonstração; não representa uma avaliação independente de qualidade."
+            return answer
+
         if intent == "recommendation":
             rows = ctx.get("products", [])
+            excluded = set(ctx.get("recommended_product_ids", []))
+            rows = [product for product in rows if product.get("product_id") not in excluded]
             if not rows:
                 return (
                     "Posso ajudar a escolher, sim! Qual instrumento você procura "
@@ -359,6 +505,8 @@ class EmporioAgent:
                     "em mente, pode me informar também."
                 )
 
+            preferences = ctx.get("preferred_specs", {})
+            rows = [p for p in rows if _product_matches_preferences(p, preferences)]
             selected = _select_recommended_product(rows)
             candidates = [p for p in rows if _is_beginner_friendly(p)] or rows
             if selected is None:
@@ -491,8 +639,43 @@ class EmporioAgent:
         normalized = _normalize(clean)
         greetings = {"oi", "ola", "bom dia", "boa tarde", "boa noite", "opa", "e ai"}
 
+        # Uma nova pesquisa explícita prevalece sobre qualquer etapa pendente.
+        # Reinicia somente o contexto da pesquisa/recomendação, preservando a
+        # identidade da sessão e o histórico de mensagens.
+        if _is_explicit_catalog_search(clean):
+            session["pending_action"] = None
+            session["last_products"] = []
+            session["catalog_products"] = []
+            session["last_category"] = None
+            session["last_budget"] = None
+            session["preferred_specs"] = {}
+            session["recommended_product"] = None
+            session["recommended_product_ids"] = []
+            intent = _route(clean)
+        else:
+            intent = None
+
+        # Respostas curtas completam a etapa de refinamento de recomendação,
+        # mas nunca podem interceptar uma nova pesquisa explícita.
+        recommendation_pending = session.get("pending_action") in {
+            "recommendation_preference", "recommendation_alternative"
+        }
+        if intent is None and recommendation_pending:
+            extracted_preferences = _extract_recommendation_preferences(clean)
+            if extracted_preferences:
+                session.setdefault("preferred_specs", {}).update(extracted_preferences)
+                if extracted_preferences.get("max_price") is not None:
+                    session["last_budget"] = extracted_preferences["max_price"]
+                session["pending_action"] = "recommendation_alternative"
+                intent = "preference_update"
+            elif any(term in normalized for term in ["mais barato", "mais barata", "menor preco", "abaixo"]):
+                intent = "cheaper_alternative"
+            elif _is_next_recommendation_request(clean):
+                intent = "next_recommendation"
+            else:
+                intent = _route(clean)
         # Uma resposta curta pode completar uma pergunta anterior sobre políticas.
-        if session.get("pending_action") == "policy_topic":
+        elif intent is None and session.get("pending_action") == "policy_topic":
             topic = _policy_topic(clean)
             if topic:
                 intent = "policy_topic"
@@ -500,7 +683,7 @@ class EmporioAgent:
                 intent = _route(clean)
                 if intent not in {"policy", "policy_topic"}:
                     session["pending_action"] = None
-        else:
+        elif intent is None:
             intent = _route(clean)
 
         # Se o agente pediu uma categoria/modelos para concluir comparação,
@@ -541,15 +724,34 @@ class EmporioAgent:
                 session["pending_action"] = None
 
         ctx = self._tool_context(clean, intent, session)
+        ctx["preferred_specs"] = dict(session.get("preferred_specs", {}))
+        ctx["recommended_product_ids"] = list(session.get("recommended_product_ids", []))
+        ctx["last_category"] = session.get("last_category")
         answer = self._deterministic_response(clean, intent, ctx)
 
-        if intent == "recommendation":
-            selected = _select_recommended_product(ctx.get("products", []))
+        if intent in {"recommendation", "next_recommendation"}:
+            available_rows = [
+                product for product in ctx.get("products", [])
+                if _product_matches_preferences(product, session.get("preferred_specs", {}))
+                and product.get("product_id") not in set(session.get("recommended_product_ids", []))
+            ]
+            selected = _select_recommended_product(available_rows)
             if selected:
                 session["recommended_product"] = dict(selected)
+                ids = session.setdefault("recommended_product_ids", [])
+                if selected.get("product_id") not in ids:
+                    ids.append(selected.get("product_id"))
+                session["pending_action"] = "recommendation_preference"
+            elif intent == "next_recommendation":
+                session["pending_action"] = "recommendation_alternative"
         if intent == "product":
             rows = ctx.get("products", [])
             session["last_products"] = rows[:8] if rows else []
+            session["catalog_products"] = rows[:50] if rows else []
+            maximum = _extract_price(clean)
+            if maximum is not None:
+                session["last_budget"] = maximum
+                session.setdefault("preferred_specs", {})["max_price"] = maximum
             if rows:
                 session["last_intent"] = "product"
                 session["last_category"] = rows[0].get("category")

@@ -1,27 +1,27 @@
 # Test Evidence
 
-This directory contains the automated test execution result for release 3.3.2.
+This directory records the automated validation for release 3.3.4.
 
 ## Automated tests
 
-The test suite was executed locally using pytest.
+- Baseline regression tests retained from V3.3.3: 68
+- New V3.3.4 regression tests: 5
+- Total passing tests: 73
+- Failed tests: 0
 
-Result:
+The exact pytest summary and validation environment are recorded in `test_results.txt`.
 
-- Tests passed: 54
-- Tests failed: 0
-- Execution time: 5.31 seconds
+## Coverage added in V3.3.4
 
-See `test_results.txt` for the captured pytest output.
+- Explicit catalog searches take precedence over pending recommendation states.
+- New searches reset the active catalog and recommendation context without deleting customer identity.
+- Recommendations after a new search use the new catalog result set and budget.
+- Brand and budget refinements remain contextual after a fresh search.
+- Short preference replies are not misclassified as new catalog searches.
 
-## Scope
+## Validation boundary
 
-The automated tests cover the agent's core behavior, intent routing,
-product catalog interactions, contextual recommendations, and related
-conversation flows.
-
-## Environment
-
-- Python 3.12
-- Windows
-- pytest
+The recorded run is a development validation result. Windows/Python 3.12
+validation by the project maintainer remains pending before publishing the
+release tag. No production-readiness, performance, or live-inventory claim
+is made.
